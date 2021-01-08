@@ -59,13 +59,13 @@ SQLSendQuery <- dbSendQuery(channel, "SET NAMES big5")
 
 * 投資人投資時，十分看重股利發放的程度。台灣公司配息配權約在六月中旬至八月底左右，並會在配息配權時，以公司市值扣掉配股配息之市值，我們稱之為除權除息，也因此我們會在公司除權息當日看到股價下修的現象。
 
-* 然而，若是公司股價下修，卻遲遲未漲回原本價格，對於投資人而言，相當於賺了股利，卻賠了價差，因此衍生出此專案，藉由 **建構預測模型的方式預測公司是否能於除權息三日後，漲回除權息前一日之收盤價(填權息)**。
+* 然而，若是公司股價下修，卻遲遲未漲回原本價格，對於投資人而言，相當於賺了股利，卻賠了價差。Plot 2 計算所有樣本公司三日內、七日內、三十日內、九十日內、半年內(180)、一年內(360)與三年內(1080) 填權息的比率，透過此圖可以發現，即使等待除權息後一年，仍僅有49.92%的公司可以完成填權息，除權息後三年內也僅有51.29%的公司可以完成填權息，對於投資人來說，將有很高的機率會買到無法快速填權息的股票，造成上述賺了股息，賠了價差的現象。因此衍生出此專案，藉由 **建構預測模型的方式預測公司是否能於除權息三日後，漲回除權息前一日之收盤價(填權息)**。
 
 * 本文認為，若能建構此模型，對於投資人而言將有兩大好處:
 1. 投資人可藉由此模型作為投資篩選條件，將填權息機率較低的公司剔除投資組合，維護投資組合的獲利表現。
 2. 市場中短線交易者或許可藉由此模型將填權息機率作為交易策略中的一項決策變因，或許能藉此提高獲勝機率。
 
-* 以 Extreme Gradient Boosting (XGB) 模型預測後，AUC 值為 73 %。且透過 XGB 變數重要性排序後發現，過去填權息頻率、大盤股價淨值比與股價波動度對於模型的預測貢獻度最高。
+* 研究結論 : 以 Extreme Gradient Boosting (XGB) 模型預測後，AUC 值為 73 %。且透過 XGB 變數重要性排序後發現，過去填權息頻率、大盤股價淨值比與股價波動度對於模型的預測貢獻度最高。
 
 ```{r echo = TRUE}
 Twseindex_ValumeData <- dbReadTable(channel, "twseindex_data") %>%
@@ -85,6 +85,27 @@ ggplot() +
   geom_label_repel(aes(x = Year, y = Volume, label = Volume), data = Twseindex_ToLabel) +
   ggtitle("Plot 1 : Trading Volume in Taiwan (1990 to 2020)")+
   ylab("Volume")+
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0.5, angle = 45),
+        plot.background  = element_rect(fill = "white"),
+        panel.background = element_rect(fill = "white"),
+        legend.background = element_rect(fill = "white"))
+
+```
+
+```{r echo = TRUE}
+Fillratio_Data <- dbReadTable(channel, "fillratio_tosql") %>%
+  setDT() %>% 
+  .[, Ratio := str_split(FillRatio, " ", simplify = T)[, 1] %>% as.numeric() %>% as.factor]
+
+Fillratio_Data$Days <- factor(Fillratio_Data$Days, levels=c("3", "7", "30", "90", "180", "360", "1080"))
+
+ggplot(aes(x = Days, y = Ratio), data = Fillratio_Data)+
+  geom_bar(aes(x = Days, y = Ratio, fill = Ratio),
+           stat = "identity", position = "dodge")+
+  geom_label_repel(aes(x = Days, y = Ratio, label = FillRatio))+
+  ggtitle(" Plot 2 : Filling Ratio in different days")+
+  ylab("Percent (%)")+
   theme_classic() +
   theme(axis.text.x = element_text(vjust = 0.5, angle = 45),
         plot.background  = element_rect(fill = "white"),
