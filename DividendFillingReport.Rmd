@@ -1,0 +1,359 @@
+---
+title: "Dividend Filling Prediction"
+author: "Bo Dun Hsu"
+date: "2021/1/5"
+output: 
+  html_document :
+    toc : TRUE
+    toc_depth : 2
+    toc_float :
+      collapsed : TRUE
+      smooth_scroll : TRUE
+    number_selection : TRUE 
+    code_folding : hide
+---
+
+```{r echo = FALSE, include = FALSE}
+library(tidyverse)
+library(data.table)
+library(readxl)
+library(stringr)
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+library(DBI)
+library(lubridate) # %m+% add one month 
+library(corrplot)
+library(RMySQL)
+library(knitr)
+library(kableExtra)
+library(formattable) # format currency
+library(tidytext)
+
+library(reticulate)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/USER/Desktop/R_Project/ExcludeDividendandRIght/ExcludeDividendandRight")
+
+## SQL 連接設定
+channel <- dbConnect(MySQL(),
+                     user = "root", #使用者名稱
+                     password = "PKQ209pkq209", #密碼
+                     dbname = "excludedividendandright_data", #資料庫名稱
+                     host = "localhost")
+
+SQLSendQuery <- dbSendQuery(channel, "SET NAMES big5")
+
+```
+
+## 專案簡介
+
+* 建構Extreme Gradient Boosting 模型預測公司是否能於除權息三日內，漲回除權息前一日之收盤價格(完成填權息)，於測試資料集之預測效果為 AUC 73%，透過變數重要性排序後發現過去填權息頻率、大盤股價淨值比與股價波動度對模型的預測貢獻程度最大。
+---
+
+## 專案目的
+
+* 台灣證交所於1961年正式成立，1997年正式開放網路交易，Plot 1 為台灣自1990到2020 成交量(百萬股)，由圖可發現 1997年成交量提升至 691,680，與前年相比成長84%，2020年更是達到了 1,509,302，可見台灣投資風氣之盛。
+
+* 投資人投資時，十分看重股利發放的程度。台灣公司配息配權約在六月中旬至八月底左右，並會在配息配權時，以公司市值扣掉配股配息之市值，我們稱之為除權除息，也因此我們會在公司除權息當日看到股價下修的現象。
+
+* 然而，若是公司股價下修，卻遲遲未漲回原本價格，對於投資人而言，相當於賺了股利，卻賠了價差，因此衍生出此專案，藉由 **建構預測模型的方式預測公司是否能於除權息三日後，漲回除權息前一日之收盤價(填權息)**。
+
+* 本文認為，若能建構此模型，對於投資人而言將有兩大好處:
+1. 投資人可藉由此模型作為投資篩選條件，將填權息機率較低的公司剔除投資組合，維護投資組合的獲利表現。
+2. 市場中短線交易者或許可藉由此模型將填權息機率作為交易策略中的一項決策變因，或許能藉此提高獲勝機率。
+
+* 以 Extreme Gradient Boosting (XGB) 模型預測後，AUC 值為 73 %。且透過 XGB 變數重要性排序後發現，過去填權息頻率、大盤股價淨值比與股價波動度對於模型的預測貢獻度最高。
+
+```{r echo = TRUE}
+Twseindex_ValumeData <- dbReadTable(channel, "twseindex_data") %>%
+  setDT() %>% 
+  .[, .SD, .SDcols = c("Date", "Volume")] %>% 
+  .[, Year := year(Date)] %>% 
+  .[, sum(Volume), by = Year] %>% 
+  setnames(., c("Year", "V1"), c("Year", "Volume")) %>% 
+  .[, Volume := currency(Volume, "", format = "d", sep = " ")]
+
+Twseindex_ToLabel <- copy(Twseindex_ValumeData) %>% 
+  .[Year %in% c(1990, 1991, 1992, 1996, 1997, 2018, 2019, 2020)]
+
+ggplot() +
+  geom_bar(aes(x = Year, y = Volume, fill = Volume),
+           stat = "identity", position = "dodge", data = Twseindex_ValumeData) +
+  geom_label_repel(aes(x = Year, y = Volume, label = Volume), data = Twseindex_ToLabel) +
+  ggtitle("Plot 1 : Trading Volume in Taiwan (1990 to 2020)")+
+  ylab("Volume")+
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0.5, angle = 45),
+        plot.background  = element_rect(fill = "white"),
+        panel.background = element_rect(fill = "white"),
+        legend.background = element_rect(fill = "white"))
+
+```
+
+---
+
+## 資料來源與研究方法
+
+* 研究區間 : 1990 - 2020。
+
+* 資料來源 : 台灣經濟新報資料庫(TEJ)、公開資訊觀測站、TWSE台灣證券交易所網站與證券櫃台買賣中心。
+
+* 研究對象 : 台灣於 1990-2020之上市櫃公司。
+1. 排除產業類型較為特殊之金融業與 DR股(占92筆資料)。
+2. 排除特定變數資料缺漏之公司，如 2841 台開、6541 泰福-KY、4707 磐亞。
+3. TEJ資料庫中，1220 台榮、1446 宏和與2702 華園之 1992 年股票股利有異，因此查詢證交所資料後直接修改。
+
+* 預測模型 : Extrmem Gradient Boosting。
+
+* 分析工具 : R、Python、MySQL
+
+---
+
+## 變數說明
+
+* Table 1 為此專案所使用之所有變數與變數說明。
+
+* FillDiv_Sign 為此專案之應變數，我們將應用 Table 1 中之其餘變數(除StockCode、Name與DividendDate)預測 FillDiv_Sign 是否為 1，即該公司是否會於除權息後三日內成功填權息。
+
+```{r echo = TRUE, message = FALSE}
+load("Data/VariableDescription.RData")
+
+VariableDescription %>% 
+  kable("html", escape = F, align = "l", 
+        caption = "Table 1 : Variable Description") %>%
+  kable_styling("hover", full_width = T) %>% 
+  scroll_box(width = "900px", height = "500px")
+```
+
+---
+
+## 敘述統計
+
+* Table 2 : 資料集相關基本資料。
+
+* Table 3 : 所有變數之表格，在此隨機挑選其中100筆數據。
+
+```{r echo = TRUE, message = FALSE}
+Finaldata_ThreeDays <- dbReadTable(channel, "finaldata_threedays") %>% 
+  setDT()
+
+TimeRange <- str_c(range(Finaldata_ThreeDays$DividendDate)[1], 
+                   " 到 ", 
+                   range(Finaldata_ThreeDays$DividendDate)[2])
+
+BasicDescribeToFinalData <- data.table(c("樣本總數", "公司總數", "研究區間", "自變數數量"),
+                                       c(str_c(nrow(Finaldata_ThreeDays), " 筆"), 
+                                         str_c(length(unique(Finaldata_ThreeDays$Name)), " 家"),
+                                         TimeRange,
+                                         str_c(ncol(Finaldata_ThreeDays)-4, " 個"))) %>% 
+  setnames(., c("V1", "V2"), c("Column", "Value"))
+
+BasicDescribeToFinalData %>% 
+  kable("html", escape = F, align = "l", 
+        caption = "Table 2 : Basic Summary of Final Data") %>%
+  kable_styling("hover", full_width = T) %>% 
+  scroll_box(width = "900px", height = "250px")
+
+Finaldata_ThreeDays %>% 
+  .[sample(.N, 100)] %>% 
+  dplyr::select(everything()) %>%
+  kable("html", escape = F, align = "l", 
+        caption = "Table 3 : All Variables") %>%
+  kable_styling("hover", full_width = T) %>% 
+  scroll_box(width = "900px", height = "500px")
+
+```
+
+---
+
+* Table 4 : 此表格將樣本區分為三日內填權息(FillDiv)與未能於三日內填權息(UnFillDiv)兩大群組，計算各變數的平均值，另外表格中的AllSamples 代表計算所有樣本的各變數平均值，藉以觀察各變數在是否填權息的情況之平均。透過表格可以發現 : 
+
+1. FillFrequency : 能於三日內填權息的公司相對來說會有較高填權息頻率。
+ 
+2. TWSE_PERatio、TWSE_PBRatio :  可代表大盤價格是否被高估。根據過去八年的經驗來看，大盤股價淨值比(TWSE_PBRatio)若接近或超過1.8，則股市下跌機率較高 (資料來源 : 財報狗)，我們也可藉由表格發現，未能於三日內填權息的公司平均來說會有較高的 TWSE_PERatio 及TWSE_PBRatio。
+
+3. Volatility_PreSixMonth : 代表公司的股價波動程度，若股價波動較大，則較有機會彈回除權息前的價格，我們也能藉由表格發現能於三日內填權息的公司相對來說股價波動程度較高。
+
+4. TWSE_Volume : 代表大盤的成交量，成交量較高時能使股價較容易產生波動，可藉由表格發現較容易填權息的公司平均來說有較高的大盤成交量。
+
+5. SingleRevenueGrowthRate_Percent、SingleRevenueToPreMonth_Percent: 皆代表公司 **單月** 營收狀況，我們可以發現能於三日內填權息的公司相對來說會有較好的單月營收狀況。然而若是以除權息前三個月的營收平均去觀察，情況則恰與單月營收狀況相反，能於三日內填權息的公司相對來說會有較低的 近3月累計營收成長率 (RevenueGrowthRate_PreThreeMonth)。
+
+6. TWSE_Return_Percent : 代表大盤報酬率，可發現大盤表現較佳時傾向會有較高的三日內填權息機率。
+
+---
+
+```{r echo = TRUE, message = FALSE}
+NumericColumns <- c("FillDiv_Sign", "FillFrequency", "TWSE_PBRatio", "Volatility_PreSixMonth", "TWSE_PERatio", "TWSE_Volume", "RevenueGrowthRate_PreThreeMonth", "SingleRevenueGrowthRate_Percent", "SingleRevenueToPreMonth_Percent", "TWSE_Return_Percent")
+
+AllSamples <- 1:9
+
+for (i in 1:9) {
+  
+  MeanValue <- copy(Finaldata_ThreeDays) %>% 
+    pull(NumericColumns[i+1]) %>% 
+    mean(., na.rm = T)
+  
+  AllSamples[i] <- MeanValue
+}
+
+NumericSummaryToFillDiv_Sign <- copy(Finaldata_ThreeDays) %>% 
+  .[, .SD, .SDcols = NumericColumns] %>% 
+  .[, lapply(.SD, mean), by = "FillDiv_Sign"] %>% 
+  .[, FillDiv_Sign := case_when(FillDiv_Sign == 1 ~ "FillDiv", FillDiv_Sign == 0 ~ "UnFillDiv")] %>% 
+  tidyr::gather(., key = 'Variable', value = "Value", -FillDiv_Sign) %>%
+  mutate(., Value = round(Value, 2)) %>% 
+  tidyr::spread(., FillDiv_Sign, Value) %>%
+  setDT() %>%
+  .[c(1, 5, 9, 6, 8, 2, 3, 4, 7)] %>%  # reorder the row by variable
+   cbind(., AllSamples) %>% 
+  .[, AllSamples := round(AllSamples, 2)]
+
+kable(NumericSummaryToFillDiv_Sign, 
+      caption = "Table 4 : Variables to FillDiv_Sign", align = "l") %>% 
+  kable_styling(full_width = TRUE)
+
+```
+
+* Plot 2 : 此圖為FillPrevious2YearsSign 於能否於三日內填權息樣本中的各自分佈情況。藍色代表樣本過去兩次皆於三日內填權息，可以發現能於三日內填權息的公司 (FillDiv) 相對來說有較高的過去兩年皆填權息的比例 (25 %)。
+
+```{r echo = TRUE, message = FALSE}
+## FillPrevious2Years
+Summary_FillPrevious2Years_ToPlot <- copy(Finaldata_ThreeDays) %>%
+  .[, .SD, .SDcols = c("FillDiv_Sign", "FillPrevious2Years")] %>%
+  .[, table(FillPrevious2Years), by = "FillDiv_Sign"] %>%
+  .[, FillPrevious2YearsSign := c("0", "1",
+                                  "0", "1")] %>%
+  .[, Percent := round((`V1` / sum(V1))*100, 0),
+    by = "FillDiv_Sign"] %>%
+  dplyr::rename("Num" = "V1") %>%
+  .[, .SD, .SDcols = c("FillDiv_Sign", "FillPrevious2YearsSign", "Num", "Percent")] %>% 
+  .[, FillDiv_Sign := case_when(FillDiv_Sign == 1 ~ "FillDiv", FillDiv_Sign == 0 ~ "UnFillDiv")] 
+
+# 畫圖顯示 FillPrevious2Years
+Summary_FillPrevious2Years_ToPlot %>%
+  .[, `:=` (FillDiv_Sign = as.character(FillDiv_Sign),
+            Percent = as.numeric(Percent))] %>%
+  ggplot(., aes(x = FillDiv_Sign, y = Percent)) +
+  geom_bar(aes(x = FillDiv_Sign, y = Percent, fill = FillPrevious2YearsSign),
+           stat = "identity", position = "dodge") +
+  geom_label_repel(aes(x = FillDiv_Sign, y = Percent, label = Percent)) +
+  ggtitle(" Plot 2 : FillDiv_Sign to FillPrevious2YearsSign")+
+  ylab("Percent (%)")+
+  theme_classic() +
+  theme(axis.text.x = element_text(vjust = 0.5, angle = 45),
+        plot.background  = element_rect(fill = "white"),
+        panel.background = element_rect(fill = "white"),
+        legend.background = element_rect(fill = "white"))
+
+```
+
+* Plot 3 : 此圖為區分為能否於三日內填權息兩群組後的產業分佈狀況。能於三日內填權息的公司(FillDiv) 比例最高的前三名分別為 : 電子零件組、半導體與電腦周邊。不能於三日內填權息的公司 (UnFillDiv) 比例最高的前三名分別為 : 電子零件組、其他產業與電腦周邊。
+
+```{r echo = TRUE, message = FALSE}
+## Industry
+Summary_Industry_ToPlot <- copy(Finaldata_ThreeDays) %>%
+  .[, .SD, .SDcols = c("FillDiv_Sign", "Industry")] %>% 
+  .[, .(count = .N), by = c("FillDiv_Sign", "Industry")] %>% 
+  .[, FillDiv_Sign := case_when(FillDiv_Sign == 1 ~ "FillDiv", FillDiv_Sign == 0 ~ "UnFillDiv")]
+
+Industry_Tolabel <- copy(Summary_Industry_ToPlot) %>% 
+  .[order(count, decreasing = T)] %>% 
+  .[Industry %in% c("M2328 電子零組件", "M2324 半導體", "M9900 其他", "M2325 電腦及週邊", "	M2500 建材營造")] %>% 
+  .[, Label := str_split(Industry, " ", simplify = T)[, 2] %>% str_c(., ":", count)]
+
+ggplot(Summary_Industry_ToPlot, aes(reorder_within(FillDiv_Sign, count, Industry), count)) +
+  geom_bar(aes(fill = Industry), stat = 'identity') +
+  facet_wrap(~ FillDiv_Sign, scales = "free_x") +
+  geom_label_repel(aes(label = Label), data = Industry_Tolabel) + 
+  xlab("Industry") +
+  ggtitle(" Plot 3 : FillDiv_Sign to Industry") +
+  theme_classic() +
+  theme(axis.text.x =  element_blank(), # 刪除X軸的 text 
+        plot.background  = element_rect(fill = "white"),
+        panel.background = element_rect(fill = "white"),
+        legend.background = element_rect(fill = "white"))
+
+  
+# ggplotly(plot, tooltip = c("Industry", "count"))
+```
+
+---
+
+## 模型表現 
+
+* 此專案使用之預測模型為 Extreme Gradient Boosting (XGB) 模型，可以藉由 查看完整原始碼。
+
+* 透過參數調整後，可以藉由 Table 5 查看完整 XGB 參數設定。
+
+```{r}
+
+alg <- c(learning_rate = 0.01,
+    n_estimators = 1000,
+    max_depth = 3,
+    min_child_weight = 8,
+    gamma = 0,
+    subsample = 0.9,
+    colsample_bytree = 0.5,
+    objective = 'binary:logistic',
+    nthread = 4,
+    scale_pos_weight = 1,
+    seed = 27)
+
+AlgData <- data.table(names(alg), alg) %>% 
+  setnames(., c("V1", "alg"), c("Parameter", "Value"))
+
+kable(AlgData, 
+      caption = "Table 5 : Parameter of Extreme Gradient Boosting", align = "l") %>% 
+  kable_styling(full_width = TRUE)
+
+```
+
+* Plot 4 : 此專案將所有樣本以 75 : 25 之比例將樣本區分為訓練資料集與測試資料集，並採用 AUC 作為模型預測表現之判斷依據，藉由 CV 調整參數後，測試集之 AUC 值為 73.12 %，Plot 4 為 XGB 模型之ROC 圖。
+
+![Plot 4 : XGB- ROC Curve](/Users/USER/Desktop/R_Project/ExcludeDividendandRIght/ExcludeDividendandRight/Output/XGB_ROC.png)
+
+---
+
+* Plot 5 : 我們可以藉由 XGB 模型計算變數重要性，觀察 Plot 5 可以發現，對於預測公司是否能於三日內填權息來說，變數重要性排序分別為 :
+
+1. FillFrequency 過去填權息頻率
+
+2. TWSE_PBRatio 大盤股價淨值比
+
+3. Volatility_PreSixMonth 股價波動度
+
+![Plot 5 : Feature Importance in XGB](/Users/USER/Desktop/R_Project/ExcludeDividendandRIght/ExcludeDividendandRight/Output/NewFeatureImportance.png)
+
+---
+
+## 結論與未來改進目標
+
+* 結論 : 此專案透過 XGB 模型預測公司是否能於除權息後三日內填權息，最終測試樣本集之AUC 值為 73 %，且透過XGB 變數重要性排序後發現，過去填權息頻率、大盤股價淨值比與股價波動度為前三大重要變數。
+
+* 未來改進目標 : 
+
+1. 藉由尋找更多有效的變數促使模型預測效果能更好。
+
+2. 可嘗試使用如 SVM、Random Forest 等模型實驗預測效果，並比較最好的模型藉以使用。另外，亦可考慮使用 如 stacking 模型，整合不同預測模型之優點，共同預測，或能增進模型預測表現。
+
+3. 透過變數重要性排序發現，公司除權息前的財務比率變數對於預測模型的貢獻不高，由於不同產業的財報表現大不相同，或許可將樣本以產業拆分後，針對不同的產業建構不同的預測模型，或能增大財務比率變數的貢獻，進而增強模型預測能力。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
