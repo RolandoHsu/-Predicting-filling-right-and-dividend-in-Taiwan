@@ -178,6 +178,56 @@ FillDivStock <- copy(FillDivStock_Data) %>%
   .[!(Industry %in% c("M2800 金融業"))] %>% 
   .[!(Name %in% c("2841 台開"))] # 台開資料缺失問題過於研究，直接刪除
 
+###### 計算 3 7 30 天 三個月 半年 一年 三年後有多少比例的公司可以填權息 #####
+# Days <- c(3, 7, 30, 90, 180, 360, 1080)
+# 
+# FillRatio <- data.table(Days, "0")
+# 
+# for (i in 1:7) {
+#   FillDivStock_Data <- UnadjustPrice %>% 
+#     left_join(., DividendPolicy, by = c("StockCode", "Year")) %>% 
+#     setDT() %>% 
+#     .[order(StockCode, DividendDate)] %>% 
+#     .[as.Date(Date) >= (as.Date(DividendDate) - 1)] %>% 
+#     .[, head(.SD, (i+1)), by = c("StockCode", "DividendDate")] %>% 
+#     .[, Threhold := head(Close, 1), by = c("StockCode", "DividendDate")] %>% 
+#     .[, .SD[-1], by = c("StockCode", "DividendDate")] %>% 
+#     .[, FillOrNot := ifelse(Close >= Threhold, 1, 0)]
+#   
+#   
+#   FillDivStock <- copy(FillDivStock_Data) %>% 
+#     .[, .SD, .SDcols = c("StockCode", "Name", "DividendDate", "FillOrNot")] %>% 
+#     .[, sum(FillOrNot), by = c("StockCode", "Name", "DividendDate")] %>% 
+#     .[, FillDiv_Sign := ifelse(V1 != 0, 1, 0)] %>% 
+#     .[, .SD, .SDcols = -c("V1")] %>% 
+#     .[, Year := year(DividendDate)] %>% 
+#     .[CompanyBasicData, on = "Name"] %>% 
+#     .[!(Industry %in% c("M2800 金融業"))] %>% 
+#     .[!(Name %in% c("2841 台開"))] # 台開資料缺失問題過於研究，直接刪除
+# 
+#   Ratio_Data <- copy(FillDivStock) %>% 
+#     pull(FillDiv_Sign) %>% 
+#     table() %>% 
+#     as.data.table()
+#   
+#   Ratio <- round((Ratio_Data$N[2] / (Ratio_Data$N[1] + Ratio_Data$N[2]))*100, 2)
+#   
+#   FillRatio[i, 2] <- str_c(Ratio, " %")
+#   
+#   print(i)
+# }
+# 
+# FillRatio <- copy(FillRatio) %>% 
+#   setnames(., c("Days", "V2"), c("Days", "FillRatio"))
+
+## 將結果存入MYSQL 
+
+FillRatio_ToSQL <- copy(FillRatio) 
+
+dbWriteTable(channel, "FillRatio_ToSQL", FillRatio_ToSQL)
+rm(FillRatio_ToSQL)
+
+
 ##2020 還存在的公司名單
 SurviveIn2020 <- copy(FillDivStock_Data) %>% 
   .[, tail(.SD, 1), by = Name] %>% 
