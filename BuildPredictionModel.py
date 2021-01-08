@@ -29,8 +29,8 @@ rcParams['figure.figsize'] = 12, 4
 mydb = mysql.connector.connect(
   host = "localhost",
   user = "root",
-  password = "PKQ209pkq209",
-  database = "excludedividendandright_data")
+  password = "***",
+  database = "***")
 
 mycursor = mydb.cursor()
 
