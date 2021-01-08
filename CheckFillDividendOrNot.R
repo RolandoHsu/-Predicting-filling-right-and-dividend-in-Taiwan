@@ -11,8 +11,8 @@ library(RMySQL)
 ##### SQL 連接設定 #####
 channel <- dbConnect(MySQL(),
                      user = "root", #使用者名稱
-                     password = "PKQ209pkq209", #密碼
-                     dbname = "excludedividendandright_data", #資料庫名稱
+                     password = "***", #密碼
+                     dbname = "***", #資料庫名稱
                      host = "localhost")
 
 
@@ -239,8 +239,8 @@ Rank_FillDiv <- copy(FillDivStock) %>%
 # 
 # channel <- dbConnect(MySQL(),
 #                      user = "root", #使用者名稱
-#                      password = "PKQ209pkq209", #密碼
-#                      dbname = "excludedividendandright_data", #資料庫名稱
+#                      password = "***", #密碼
+#                      dbname = "***", #資料庫名稱
 #                      host = "localhost")
 # 
 # Encoding(FillFrequency_Result_ToSQL$Name) <- "unknown"
@@ -250,8 +250,8 @@ Rank_FillDiv <- copy(FillDivStock) %>%
 # 將資料從 SQL 拉回 R
 channel <- dbConnect(MySQL(),
                      user = "root", #使用者名稱
-                     password = "PKQ209pkq209", #密碼
-                     dbname = "excludedividendandright_data", #資料庫名稱
+                     password = "***", #密碼
+                     dbname = "***", #資料庫名稱
                      host = "localhost")
 
 dbSendQuery(channel, "SET NAMES big5")
@@ -671,8 +671,8 @@ IndustryMean_PERatio <- copy(IndustryMean_PERatio) %>%
 #   as.data.frame()
 # channel <- dbConnect(MySQL(),
 #                      user = "root", #使用者名稱
-#                      password = "PKQ209pkq209", #密碼
-#                      dbname = "excludedividendandright_data", #資料庫名稱
+#                      password = "***", #密碼
+#                      dbname = "***", #資料庫名稱
 #                      host = "localhost")
 # 
 # Encoding(Volatility_Result_ToSQL$Name) <- "unknown"
@@ -771,8 +771,8 @@ CrisisEvent_UnFillDiv_Ratio <- copy(CrisisEvent) %>%
 ##### 營收資料 ##### 
 channel <- dbConnect(MySQL(),
                        user = "root", #使用者名稱
-                       password = "PKQ209pkq209", #密碼
-                       dbname = "excludedividendandright_data", #資料庫名稱
+                       password = "***", #密碼
+                       dbname = "***", #資料庫名稱
                        host = "localhost")
 
 dbSendQuery(channel, "SET NAMES big5")
@@ -805,8 +805,8 @@ CheckNA_Revenue_Result <- copy(Revenue_Result) %>%
 ###### 三大法人買賣超 #####
 # channel <- dbConnect(MySQL(),
 #                      user = "root", #使用者名稱
-#                      password = "PKQ209pkq209", #密碼
-#                      dbname = "institutionalinvestors_netbuyandsell_data", #資料庫名稱
+#                      password = "***", #密碼
+#                      dbname = "***", #資料庫名稱
 #                      host = "localhost")
 # 
 # dbSendQuery(channel, "SET NAMES big5")
@@ -846,8 +846,8 @@ CheckNA_Revenue_Result <- copy(Revenue_Result) %>%
 ##### 台灣股價指數 ##### 
 channel <- dbConnect(MySQL(),
                        user = "root", #使用者名稱
-                       password = "PKQ209pkq209", #密碼
-                       dbname = "excludedividendandright_data", #資料庫名稱
+                       password = "***", #密碼
+                       dbname = "***", #資料庫名稱
                        host = "localhost")
 
 dbSendQuery(channel, "SET NAMES big5")
@@ -935,8 +935,8 @@ FinalData_ToSQL <- copy(FinalData_SevenDays) %>%
 
 channel <- dbConnect(MySQL(),
                      user = "root", #使用者名稱
-                     password = "PKQ209pkq209", #密碼
-                     dbname = "excludedividendandright_data", #資料庫名稱
+                     password = "***", #密碼
+                     dbname = "***", #資料庫名稱
                      host = "localhost")
 
 Encoding(FinalData_ToSQL$Name) <- "unknown"
